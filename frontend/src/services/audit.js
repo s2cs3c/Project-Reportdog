@@ -56,6 +56,10 @@ export default {
     return api.delete(`audits/${auditId}/findings/${findingId}`)
   },
 
+  mergeFindings: function(auditId, findingIds, title) {
+    return api.post(`audits/${auditId}/findings/merge`, { findingIds, title })
+  },
+
   getSection: function(auditId, sectionId) {
     return api.get(`audits/${auditId}/sections/${sectionId}`)
   },

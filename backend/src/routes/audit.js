@@ -380,6 +380,33 @@ module.exports = function(app, io) {
         .catch(err => Response.Internal(res, err))
     });
 
+    // Merge multiple findings into one
+    app.post("/api/audits/:auditId/findings/merge", acl.hasPermission('audits:update'), async function(req, res) {
+        var settings = await Settings.getAll();
+        var audit = await Audit.getAudit(acl.isAllowed(req.decodedToken.role, 'audits:read-all'), req.params.auditId, req.decodedToken.id);
+        if (settings.reviews.enabled && audit.state !== "EDIT") {
+            Response.Forbidden(res, "The audit is not in the EDIT state and therefore cannot be edited.");
+            return;
+        }
+        if (!req.body.findingIds || !Array.isArray(req.body.findingIds) || req.body.findingIds.length < 2) {
+            Response.BadParameters(res, 'Required parameter: findingIds (array of at least 2 finding IDs)');
+            return;
+        }
+
+        Audit.mergeFindings(
+            acl.isAllowed(req.decodedToken.role, 'audits:update-all'), 
+            req.params.auditId, 
+            req.decodedToken.id, 
+            req.body.findingIds,
+            req.body.title
+        )
+        .then(msg => {
+            io.to(req.params.auditId).emit('updateAudit');
+            Response.Ok(res, msg);
+        })
+        .catch(err => Response.Internal(res, err))
+    });
+
     // Get section of audit
     app.get("/api/audits/:auditId/sections/:sectionId", acl.hasPermission('audits:read'), function(req, res) {
         Audit.getSection(acl.isAllowed(req.decodedToken.role, 'audits:read-all'), req.params.auditId, req.decodedToken.id, req.params.sectionId)

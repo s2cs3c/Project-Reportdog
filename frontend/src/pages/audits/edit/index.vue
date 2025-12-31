@@ -116,6 +116,17 @@
 							<q-item-section v-else>{{$t('findings')}} ({{audit.findings.length || 0}})</q-item-section>
 							<q-item-section avatar>
 								<q-btn
+								@click="$refs.mergeModal.show()"
+								icon="merge_type"
+								round
+								dense
+								color="secondary"
+								v-if="frontEndAuditState === AUDIT_VIEW_STATE.EDIT && audit.type === 'default' && audit.findings && audit.findings.length >= 2"
+								class="q-mr-xs"
+								>
+									<q-tooltip>{{$t('merge')}}</q-tooltip>
+								</q-btn>
+								<q-btn
 								@click="$router.push('/audits/'+auditId+'/findings/add').catch(err=>{})"
 								icon="add"
 								round
@@ -324,6 +335,73 @@
 		</q-splitter>
 	</q-drawer>
 	<router-view :key="$route.fullPath"/>
+
+	<!-- Merge Findings Modal -->
+	<q-dialog persistent ref="mergeModal" @hide="resetMergeModal">
+		<q-card style="width: 600px; max-width: 600px; height: 70vh">
+			<q-bar class="bg-secondary text-white">
+				<span>{{$t('mergeFindings')}}</span>
+				<q-space />
+				<q-btn dense flat icon="close" @click="$refs.mergeModal.hide()" />
+			</q-bar>
+
+			<q-card-section>
+				<div class="text-grey-8 q-mb-md">{{$t('mergeFindingsInfo')}}</div>
+				<q-input
+				v-model="mergeTitle"
+				:label="$t('mergedFindingTitle')"
+				outlined
+				dense
+				/>
+			</q-card-section>
+
+			<q-separator />
+
+			<q-card-section class="q-py-sm bg-blue-grey-1">
+				<div class="row items-center">
+					<span class="text-bold">{{$t('selectFindingsToMerge')}}</span>
+					<q-space />
+					<q-badge color="primary">{{mergeSelectedFindings.length}} {{$t('selected')}}</q-badge>
+				</div>
+			</q-card-section>
+
+			<q-card-section class="merge-findings-list q-pa-none">
+				<q-scroll-area style="height: 100%">
+					<q-list separator>
+						<q-item tag="label" v-for="finding of audit.findings" :key="finding._id" dense clickable>
+							<q-item-section side top>
+								<q-checkbox v-model="mergeSelectedFindings" :val="finding._id" />
+							</q-item-section>
+							<q-item-section>
+								<q-item-label>{{finding.title}}</q-item-label>
+								<q-item-label caption>{{finding.category || $t('noCategory')}}</q-item-label>
+							</q-item-section>
+							<q-item-section side v-if="finding.priority">
+								<q-badge :color="getPriorityColor(finding.priority)">
+									{{getPriorityLabel(finding.priority)}}
+								</q-badge>
+							</q-item-section>
+						</q-item>
+					</q-list>
+				</q-scroll-area>
+			</q-card-section>
+
+			<q-separator />
+
+			<q-card-actions align="right">
+				<q-btn color="primary" outline @click="$refs.mergeModal.hide()">{{$t('btn.cancel')}}</q-btn>
+				<q-btn 
+				color="secondary" 
+				unelevated 
+				@click="mergeFindings" 
+				:disable="mergeSelectedFindings.length < 2"
+				:loading="merging"
+				>
+					{{$t('merge')}} ({{mergeSelectedFindings.length}})
+				</q-btn>
+			</q-card-actions>
+		</q-card>
+	</q-dialog>
 </template>
 
 <script>
@@ -382,7 +460,11 @@ export default {
 			editComment: editCommentR,
 			editReply: editReplyR,
             fieldHighlighted: fieldHighlightedR,
-            commentsFilter: "all" // [all, active, resolved]
+            commentsFilter: "all", // [all, active, resolved]
+			// Merge findings
+			mergeTitle: 'Merged Findings',
+			mergeSelectedFindings: [],
+			merging: false
 		}
 	},
 
@@ -947,6 +1029,77 @@ export default {
 				// console.log(err)
 			})
 		},
+
+		// Merge Findings methods
+		resetMergeModal: function() {
+			this.mergeTitle = 'Merged Findings';
+			this.mergeSelectedFindings = [];
+			this.merging = false;
+		},
+
+		getPriorityColor: function(priority) {
+			switch(priority) {
+				case 1: return 'green';
+				case 2: return 'orange';
+				case 3: return 'red';
+				case 4: return 'purple';
+				default: return 'grey';
+			}
+		},
+
+		getPriorityLabel: function(priority) {
+			switch(priority) {
+				case 1: return $t('low');
+				case 2: return $t('medium');
+				case 3: return $t('high');
+				case 4: return $t('urgent');
+				default: return $t('undefined');
+			}
+		},
+
+		mergeFindings: function() {
+			if (this.mergeSelectedFindings.length < 2) {
+				Notify.create({
+					message: $t('msg.selectAtLeast2Findings'),
+					color: 'warning',
+					textColor: 'white',
+					position: 'top-right'
+				});
+				return;
+			}
+
+			Dialog.create({
+				title: $t('msg.confirmMerge'),
+				message: $t('msg.mergeFindingsConfirm', [this.mergeSelectedFindings.length]),
+				html: true,
+				ok: {label: $t('btn.confirm'), color: 'secondary'},
+				cancel: {label: $t('btn.cancel'), color: 'white'}
+			})
+			.onOk(() => {
+				this.merging = true;
+				AuditService.mergeFindings(this.auditId, this.mergeSelectedFindings, this.mergeTitle)
+				.then(() => {
+					this.merging = false;
+					this.$refs.mergeModal.hide();
+					this.getAudit();
+					Notify.create({
+						message: $t('msg.findingsMergeOk'),
+						color: 'positive',
+						textColor: 'white',
+						position: 'top-right'
+					});
+				})
+				.catch((err) => {
+					this.merging = false;
+					Notify.create({
+						message: err.response?.data?.datas || $t('msg.mergeError'),
+						color: 'negative',
+						textColor: 'white',
+						position: 'top-right'
+					});
+				});
+			});
+		},
 	}
 }
 </script>
@@ -1005,5 +1158,10 @@ export default {
 .sidebar-comments {
     position: fixed;
     right: 8px;
+}
+
+.merge-findings-list {
+    height: calc(70vh - 280px);
+    overflow: hidden;
 }
 </style>

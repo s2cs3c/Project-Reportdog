@@ -693,6 +693,176 @@ AuditSchema.statics.deleteFinding = (isAdmin, auditId, userId, findingId) => {
     })
 }
 
+// Merge multiple findings into one
+AuditSchema.statics.mergeFindings = (isAdmin, auditId, userId, findingIds, newTitle) => {
+    return new Promise((resolve, reject) => {
+        var query = Audit.findById(auditId)
+        if (!isAdmin)
+            query.or([{creator: userId}, {collaborators: userId}])
+        query.exec()
+        .then((audit) => {
+            if (!audit)
+                throw({fn: 'NotFound', message: 'Audit not found or Insufficient Privileges'})
+
+            if (!findingIds || findingIds.length < 2)
+                throw({fn: 'BadParameters', message: 'At least 2 findings are required for merging'})
+
+            // Get findings to merge
+            const findingsToMerge = [];
+            for (const findingId of findingIds) {
+                const finding = audit.findings.id(findingId);
+                if (!finding)
+                    throw({fn: 'NotFound', message: `Finding ${findingId} not found`})
+                findingsToMerge.push(finding);
+            }
+
+            // Build merged content
+            let mergedDescription = '';
+            let mergedObservation = '';
+            let mergedRemediation = '';
+            let mergedPoc = '';
+            let mergedScope = '';
+            let allReferences = [];
+            
+            // Track highest values
+            let highestCvssv3 = null;
+            let highestCvssv3Score = 0;
+            let highestCvssv4 = null;
+            let highestCvssv4Score = 0;
+            let highestPriority = null;
+            let highestRemediationComplexity = null;
+            let category = null;
+            let vulnType = null;
+            let customFields = [];
+
+            // Helper to estimate CVSS score from vector
+            const getCvssScore = (cvssVector) => {
+                if (!cvssVector) return 0;
+                const highSeverityMetrics = ['AV:N', 'AC:L', 'PR:N', 'UI:N', 'S:C', 'C:H', 'I:H', 'A:H'];
+                let score = 0;
+                highSeverityMetrics.forEach(metric => {
+                    if (cvssVector.includes(metric)) score++;
+                });
+                return score;
+            };
+
+            findingsToMerge.forEach((finding) => {
+                // Aggregate descriptions with original title headers
+                if (finding.title) {
+                    mergedDescription += `<h3>== Original Finding: ${finding.title} ==</h3>\n`;
+                    if (finding.description) {
+                        mergedDescription += finding.description + '\n\n';
+                    }
+                }
+
+                // Aggregate observations
+                if (finding.observation) {
+                    mergedObservation += `<h4>${finding.title}</h4>\n`;
+                    mergedObservation += finding.observation + '\n\n';
+                }
+
+                // Aggregate remediations
+                if (finding.remediation) {
+                    mergedRemediation += `<h4>${finding.title}</h4>\n`;
+                    mergedRemediation += finding.remediation + '\n\n';
+                }
+
+                // Aggregate POC
+                if (finding.poc) {
+                    mergedPoc += `<h4>${finding.title}</h4>\n`;
+                    mergedPoc += finding.poc + '\n\n';
+                }
+
+                // Aggregate scope
+                if (finding.scope) {
+                    mergedScope += finding.scope + '\n';
+                }
+
+                // Collect references
+                if (finding.references && finding.references.length > 0) {
+                    allReferences = allReferences.concat(finding.references);
+                }
+
+                // Track highest CVSS v3
+                const cvssv3Score = getCvssScore(finding.cvssv3);
+                if (cvssv3Score > highestCvssv3Score) {
+                    highestCvssv3Score = cvssv3Score;
+                    highestCvssv3 = finding.cvssv3;
+                }
+
+                // Track highest CVSS v4
+                const cvssv4Score = getCvssScore(finding.cvssv4);
+                if (cvssv4Score > highestCvssv4Score) {
+                    highestCvssv4Score = cvssv4Score;
+                    highestCvssv4 = finding.cvssv4;
+                }
+
+                // Track highest priority (4 = urgent, highest)
+                if (finding.priority && (!highestPriority || finding.priority > highestPriority)) {
+                    highestPriority = finding.priority;
+                }
+
+                // Track highest remediation complexity (3 = complex, highest)
+                if (finding.remediationComplexity && (!highestRemediationComplexity || finding.remediationComplexity > highestRemediationComplexity)) {
+                    highestRemediationComplexity = finding.remediationComplexity;
+                }
+
+                // Use first non-null category and vulnType
+                if (!category && finding.category) category = finding.category;
+                if (!vulnType && finding.vulnType) vulnType = finding.vulnType;
+
+                // Collect custom fields from first finding that has them
+                if (customFields.length === 0 && finding.customFields && finding.customFields.length > 0) {
+                    customFields = finding.customFields;
+                }
+            });
+
+            // Remove duplicate references
+            allReferences = [...new Set(allReferences)];
+
+            // Get next identifier
+            return Audit.getLastFindingIdentifier(auditId)
+            .then(identifier => {
+                // Create new merged finding
+                const mergedFinding = {
+                    identifier: ++identifier,
+                    title: newTitle || 'Merged Findings',
+                    vulnType: vulnType,
+                    description: mergedDescription.trim(),
+                    observation: mergedObservation.trim(),
+                    remediation: mergedRemediation.trim(),
+                    poc: mergedPoc.trim(),
+                    scope: mergedScope.trim(),
+                    cvssv3: highestCvssv3,
+                    cvssv4: highestCvssv4,
+                    priority: highestPriority,
+                    remediationComplexity: highestRemediationComplexity,
+                    references: allReferences,
+                    category: category,
+                    customFields: customFields,
+                    status: 0 // Default status
+                };
+
+                // Add merged finding
+                audit.findings.push(mergedFinding);
+
+                // Remove original findings
+                for (const findingId of findingIds) {
+                    audit.findings.pull(findingId);
+                }
+
+                return audit.save({ validateBeforeSave: false });
+            });
+        })
+        .then(() => {
+            resolve({ message: 'Findings merged successfully', merged: findingIds.length });
+        })
+        .catch((err) => {
+            reject(err);
+        });
+    });
+}
+
 // Create section
 AuditSchema.statics.createSection = (isAdmin, auditId, userId, section) => {
     return new Promise((resolve, reject) => { 
