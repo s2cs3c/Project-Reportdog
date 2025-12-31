@@ -33,6 +33,49 @@
                     </q-card-section>
                     <q-separator />
                 </div>
+                <div v-if="userStore.isAllowed('vulnerabilities:create')">
+                    <q-card-section>
+                        <div class="text-bold">{{$t('importNessus')}}</div>
+                    </q-card-section>
+                    <q-card-section>
+                        <div class="text-grey-8" v-html="$t('importNessusInfo')"></div>
+                    </q-card-section>
+                    <q-card-section class="row q-gutter-md items-center">
+                        <q-select
+                        v-model="nessusLocale"
+                        :options="languages"
+                        option-value="locale"
+                        option-label="language"
+                        emit-value
+                        map-options
+                        :label="$t('language')"
+                        outlined
+                        dense
+                        style="min-width: 150px"
+                        />
+                        <input
+                        ref="importNessus"
+                        value=""
+                        type="file"
+                        accept=".nessus, .xml"
+                        class="hidden"
+                        @change="importNessus($event.target.files)"
+                        />
+                        <q-btn 
+                        :label="$t('importNessus')"
+                        flat
+                        :loading="nessusImporting"
+                        style="background-color: #26a69a; color: #fff;"
+                        @click="$refs.importNessus.click()"
+                        >
+                            <template v-slot:loading>
+                                <q-spinner-gears class="on-left" />
+                                {{$t('importing')}}...
+                            </template>
+                        </q-btn>
+                    </q-card-section>
+                    <q-separator />
+                </div>
                 <q-card-section>
                     <div class="text-bold">{{$t('exportVulnerabilities')}}</div>
                 </q-card-section>

@@ -11,6 +11,10 @@ module.exports = function(app) {
     var VulnerabilityCategory = require('mongoose').model('VulnerabilityCategory');
     var CustomSection = require('mongoose').model('CustomSection');
     var CustomField = require('mongoose').model('CustomField');
+    var Vulnerability = require('mongoose').model('Vulnerability');
+    var nessusParser = require('../lib/nessus-parser');
+    var multer = require('multer');
+    var upload = multer({ storage: multer.memoryStorage() });
 
     var _ = require('lodash')
 
@@ -460,5 +464,79 @@ module.exports = function(app) {
             Response.Ok(res, msg)
         })
         .catch(err => Response.Internal(res, err))
+    });
+
+/* ===== NESSUS IMPORT ===== */
+
+    // Import vulnerabilities from Nessus XML file (for Data Dump page)
+    app.post("/api/data/import/nessus", acl.hasPermission('vulnerabilities:create'), upload.single('file'), async function(req, res) {
+        try {
+            if (!req.file) {
+                Response.BadParameters(res, 'Required: Nessus XML file');
+                return;
+            }
+
+            const locale = req.body.locale || 'en';
+            const xmlContent = req.file.buffer.toString('utf-8');
+            
+            // Parse Nessus XML
+            const parsedVulnerabilities = await nessusParser.parseNessusXML(xmlContent, locale);
+            
+            if (parsedVulnerabilities.length === 0) {
+                Response.Ok(res, { created: 0, duplicates: 0, message: 'No vulnerabilities found in Nessus file' });
+                return;
+            }
+
+            // Prepare vulnerabilities for creation
+            var vulnerabilities = [];
+            for (var i = 0; i < parsedVulnerabilities.length; i++) {
+                var vuln = {};
+                vuln.cvssv3 = parsedVulnerabilities[i].cvssv3 || null;
+                vuln.cvssv4 = parsedVulnerabilities[i].cvssv4 || null;
+                if (parsedVulnerabilities[i].priority) vuln.priority = parsedVulnerabilities[i].priority;
+                if (parsedVulnerabilities[i].remediationComplexity) vuln.remediationComplexity = parsedVulnerabilities[i].remediationComplexity;
+                if (parsedVulnerabilities[i].category) {
+                    vuln.category = parsedVulnerabilities[i].category;
+                    VulnerabilityCategory.create({ name: vuln.category }).catch(e => {});
+                }
+                vuln.details = [];
+                parsedVulnerabilities[i].details.forEach(d => {
+                    if (!d.title || !d.locale) return;
+                    var details = {};
+                    if (d.locale) details.locale = d.locale;
+                    if (d.title) details.title = d.title;
+                    if (d.vulnType) {
+                        details.vulnType = d.vulnType;
+                        VulnerabilityType.create({ locale: d.locale, name: d.vulnType }).catch(e => {});
+                    }
+                    if (d.description) details.description = d.description;
+                    if (d.observation) details.observation = d.observation;
+                    if (d.remediation) details.remediation = d.remediation;
+                    if (d.references) details.references = d.references;
+                    if (d.customFields) details.customFields = d.customFields;
+                    vuln.details.push(details);
+                });
+                vuln.status = 1; // New/unapproved status
+                vuln.creator = req.decodedToken.id;
+                vulnerabilities.push(vuln);
+            }
+
+            // Create vulnerabilities in database
+            const result = await Vulnerability.create(vulnerabilities);
+            const summary = nessusParser.getSummary(parsedVulnerabilities);
+            
+            Response.Created(res, {
+                ...result,
+                summary: summary
+            });
+        } catch (err) {
+            if (err.message && err.message.includes('Invalid Nessus XML')) {
+                Response.BadParameters(res, err.message);
+            } else if (err.message && err.message.includes('Failed to parse')) {
+                Response.BadParameters(res, err.message);
+            } else {
+                Response.Internal(res, err);
+            }
+        }
     });
 }

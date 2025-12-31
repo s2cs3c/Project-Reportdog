@@ -68,16 +68,20 @@ export default {
             currentUpdate: '',
             currentUpdateLocale: '',
             vulnTypes: [],
-            // Merge languages
-            mergeLanguageLeft: '',
-            mergeLanguageRight: '',
-            mergeVulnLeft: '',
-            mergeVulnRight: '',
+            // Merge vulnerabilities
+            mergeTitle: 'Merged Findings',
+            mergeLocale: '',
+            mergeSelectedVulns: [],
+            merging: false,
             // Vulnerability categories
             vulnCategories: [],
             currentCategory: null,
             // Custom Fields
-            customFields: []
+            customFields: [],
+            // Nessus import
+            nessusImporting: false,
+            // Bulk approve
+            selectedVulnerabilities: []
         }
     },
 
@@ -131,20 +135,6 @@ export default {
             var result = this.vulnTypes.filter(type => type.locale === this.dtLanguage).map(type => {return type.name})
             result.unshift('Undefined')
             return result
-        },
-
-        filteredVulnerabilitiesMergeLeft: function() {
-            return this.vulnerabilities.filter(vuln => 
-                this.getVulnTitleLocale(vuln, this.mergeLanguageRight) === 'undefined' &&
-                this.getVulnTitleLocale(vuln, this.mergeLanguageLeft) !== 'undefined'
-            )
-        },
-
-        filteredVulnerabilitiesMergeRight: function() {
-            return this.vulnerabilities.filter(vuln => 
-                this.getVulnTitleLocale(vuln, this.mergeLanguageLeft) === 'undefined' &&
-                this.getVulnTitleLocale(vuln, this.mergeLanguageRight) !== 'undefined'
-            )
         }
     },
 
@@ -156,6 +146,7 @@ export default {
                 this.languages = data.data.datas;
                 if (this.languages.length > 0) {
                     this.dtLanguage = this.languages[0].locale;
+                    this.mergeLocale = this.languages[0].locale;
                     this.cleanCurrentVulnerability();
                 }
             })
@@ -487,25 +478,84 @@ export default {
             return "undefined";
         },
 
+        // Reset merge modal state
+        resetMergeModal: function() {
+            this.mergeTitle = 'Merged Findings';
+            this.mergeSelectedVulns = [];
+            this.merging = false;
+            if (this.languages.length > 0) {
+                this.mergeLocale = this.languages[0].locale;
+            }
+        },
+
+        // Get priority color for badge
+        getPriorityColor: function(priority) {
+            switch(priority) {
+                case 4: return 'negative';  // Urgent
+                case 3: return 'orange';    // High
+                case 2: return 'warning';   // Medium
+                case 1: return 'positive';  // Low
+                default: return 'grey';
+            }
+        },
+
+        // Get priority label
+        getPriorityLabel: function(priority) {
+            switch(priority) {
+                case 4: return $t('urgent');
+                case 3: return $t('high');
+                case 2: return $t('medium');
+                case 1: return $t('low');
+                default: return '';
+            }
+        },
+
+        // Merge selected vulnerabilities
         mergeVulnerabilities: function() {
-            VulnerabilityService.mergeVulnerability(this.mergeVulnLeft, this.mergeVulnRight, this.mergeLanguageRight)
-            .then(() => {
-                this.getVulnerabilities();
+            if (this.mergeSelectedVulns.length < 2) {
                 Notify.create({
-                    message: $t('msg.vulnerabilityMergeOk'),
-                    color: 'positive',
-                    textColor:'white',
-                    position: 'top-right'
-                })
-            })
-            .catch((err) => {
-                Notify.create({
-                    message: err.response.data.datas,
-                    color: 'negative',
+                    message: $t('msg.selectAtLeast2Vulnerabilities'),
+                    color: 'warning',
                     textColor: 'white',
                     position: 'top-right'
-                })
+                });
+                return;
+            }
+
+            const title = this.mergeTitle || 'Merged Findings';
+            const locale = this.mergeLocale || (this.languages.length > 0 ? this.languages[0].locale : 'en');
+
+            Dialog.create({
+                title: $t('msg.confirmMerge'),
+                message: $t('msg.mergeVulnerabilitiesConfirm', [this.mergeSelectedVulns.length]),
+                html: true,
+                ok: {label: $t('btn.confirm'), color: 'secondary'},
+                cancel: {label: $t('btn.cancel'), color: 'white'}
             })
+            .onOk(() => {
+                this.merging = true;
+                VulnerabilityService.mergeVulnerabilities(this.mergeSelectedVulns, title, locale)
+                .then((data) => {
+                    this.merging = false;
+                    this.$refs.mergeModal.hide();
+                    this.getVulnerabilities();
+                    Notify.create({
+                        message: $t('msg.vulnerabilityMergeOk', [data.data.datas.merged]),
+                        color: 'positive',
+                        textColor: 'white',
+                        position: 'top-right'
+                    });
+                })
+                .catch((err) => {
+                    this.merging = false;
+                    Notify.create({
+                        message: err.response?.data?.datas || $t('msg.mergeError'),
+                        color: 'negative',
+                        textColor: 'white',
+                        position: 'top-right'
+                    });
+                });
+            });
         },
 
         dblClick: function(row) {
@@ -514,6 +564,117 @@ export default {
                 this.$refs.updatesModal.show()
             else
                 this.$refs.editModal.show()
+        },
+
+        // Import vulnerabilities from Nessus XML file
+        importNessus: function(files) {
+            if (!files || files.length === 0) return
+            
+            const file = files[0]
+            const ext = file.name.split('.').pop().toLowerCase()
+            
+            if (ext !== 'nessus' && ext !== 'xml') {
+                Notify.create({
+                    message: $t('msg.invalidNessusFile'),
+                    color: 'negative',
+                    textColor: 'white',
+                    position: 'top-right'
+                })
+                return
+            }
+
+            this.nessusImporting = true
+            
+            VulnerabilityService.importNessus(file, this.dtLanguage)
+            .then((data) => {
+                this.nessusImporting = false
+                const result = data.data.datas
+                var message = ""
+                var color = "positive"
+                
+                if (result.created === 0 && result.duplicates === 0) {
+                    message = $t('msg.nessusImportEmpty')
+                    color = "warning"
+                } else if (result.duplicates === 0) {
+                    message = $t('msg.nessusImportOk', [result.created])
+                } else if (result.created === 0) {
+                    message = $t('msg.nessusImportAllExists', [result.duplicates.length || result.duplicates])
+                    color = "warning"
+                } else {
+                    message = $t('msg.nessusImportPartial', [result.created, result.duplicates.length || result.duplicates])
+                    color = "orange"
+                }
+                
+                if (result.summary) {
+                    message += `<br><br><strong>Summary:</strong><br>`
+                    message += `Critical: ${result.summary.byPriority.urgent}, High: ${result.summary.byPriority.high}, `
+                    message += `Medium: ${result.summary.byPriority.medium}, Low: ${result.summary.byPriority.low}`
+                }
+                
+                Notify.create({
+                    message: message,
+                    html: true,
+                    closeBtn: 'x',
+                    color: color,
+                    textColor: 'white',
+                    position: 'top-right',
+                    timeout: 10000
+                })
+                
+                this.getVulnerabilities()
+                
+                // Reset file input
+                if (this.$refs.importNessus) {
+                    this.$refs.importNessus.value = ''
+                }
+            })
+            .catch((err) => {
+                this.nessusImporting = false
+                Notify.create({
+                    message: err.response?.data?.datas || $t('msg.nessusImportError'),
+                    color: 'negative',
+                    textColor: 'white',
+                    position: 'top-right'
+                })
+            })
+        },
+
+        // Bulk approve selected vulnerabilities
+        bulkApprove: function() {
+            if (this.selectedVulnerabilities.length === 0) return
+
+            const ids = this.selectedVulnerabilities.map(v => v._id)
+            
+            Dialog.create({
+                title: $t('msg.bulkApproveConfirm'),
+                message: $t('msg.bulkApproveNotice', [ids.length]),
+                html: true,
+                ok: {label: $t('btn.confirm'), color: 'positive'},
+                cancel: {label: $t('btn.cancel'), color: 'white'}
+            })
+            .onOk(() => {
+                VulnerabilityService.bulkApprove(ids)
+                .then((data) => {
+                    const result = data.data.datas
+                    Notify.create({
+                        message: $t('msg.bulkApproveOk', [result.approved]),
+                        html: true,
+                        color: 'positive',
+                        textColor: 'white',
+                        position: 'top-right'
+                    })
+                    this.selectedVulnerabilities = []
+                    this.getVulnerabilities()
+                })
+                .catch((err) => {
+                    Notify.create({
+                        message: err.response?.data?.datas || 'Error approving vulnerabilities',
+                        color: 'negative',
+                        textColor: 'white',
+                        position: 'top-right'
+                    })
+                })
+            })
         }
     }
 }

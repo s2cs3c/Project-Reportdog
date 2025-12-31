@@ -6,7 +6,9 @@
             "name": "pwndoc",
             "server": "mongo-pwndoc-dev",
             "port": "27017"
-        }
+        },
+        "jwtSecret": "ca561ca707e6aa830e7612cd6dcb6936bcd445f7d226f10efda206a3686d9923",
+        "jwtRefreshSecret": "0ae6f31c51b1290a2a76b27c3115889ecfce450c91ad2d8d999b712afb2a4244"
     },
     "prod": {
         "port": 4242,
@@ -15,7 +17,9 @@
             "name": "pwndoc",
             "server": "mongo-pwndoc",
             "port": "27017"
-        }
+        },
+        "jwtSecret": "a96c991e1ac56885c0046ce74b1b403148c8bc5813ab80b19bf24b3f1e2d4777",
+        "jwtRefreshSecret": "e5cd446707a28b6d6592e2fdb69f357618233c645165ff0461a570cb6124b37b"
     },
     "test": {
         "port": 6262,

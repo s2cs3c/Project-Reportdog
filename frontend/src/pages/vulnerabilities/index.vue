@@ -11,10 +11,12 @@
                 :filter="search"
                 :filter-method="customFilter"
                 v-model:pagination="pagination"
+                v-model:selected="selectedVulnerabilities"
                 :sort-method="customSort"
                 separator="none"
                 row-key="_id"
                 :loading="loading"
+                :selection="userStore.isAllowed('vulnerabilities:update') ? 'multiple' : 'none'"
                 @row-dblclick="dblClick"
             >
                 <template v-slot:top>
@@ -42,7 +44,39 @@
                     no-caps
                     @click="$refs.mergeModal.show()"
                     />
+                    <q-btn 
+                    v-if="userStore.isAllowed('vulnerabilities:update') && selectedVulnerabilities.length > 0"
+                    class="q-ml-md"
+                    :label="$t('bulkApproveSelected') + ' (' + selectedVulnerabilities.length + ')'"
+                    unelevated
+                    color="positive" 
+                    no-caps
+                    @click="bulkApprove()"
+                    />
                     <q-space />
+                    <input
+                    ref="importNessus"
+                    value=""
+                    type="file"
+                    accept=".nessus, .xml"
+                    class="hidden"
+                    @change="importNessus($event.target.files)"
+                    />
+                    <q-btn 
+                    v-if="userStore.isAllowed('vulnerabilities:create')"
+                    class="q-mr-md"
+                    :label="$t('importNessus')"
+                    unelevated
+                    no-caps
+                    :loading="nessusImporting"
+                    style="background-color: #26a69a; color: #fff;"
+                    @click="$refs.importNessus.click()"
+                    >
+                        <template v-slot:loading>
+                            <q-spinner-gears class="on-left" />
+                            {{$t('importing')}}...
+                        </template>
+                    </q-btn>
                     <q-btn-dropdown 
                     v-if="userStore.isAllowed('vulnerabilities:create')"
                     unelevated
@@ -68,6 +102,7 @@
 
                 <template v-slot:top-row="props">
                     <q-tr>
+                        <q-td v-if="userStore.isAllowed('vulnerabilities:update')" auto-width></q-td>
                         <q-td style="width: 60%">
                             <q-input 
                             dense
@@ -106,6 +141,9 @@
 
                 <template v-slot:body="props">
                     <q-tr @dblclick="dblClick(props.row)" v-if="getDtTitle(props.row) !== 'Not defined for this language yet'" :props="props" :class="(props.row.status === 1)?'bg-light-blue-2':(props.row.status === 2)?'bg-orange-2':''">
+                        <q-td auto-width v-if="userStore.isAllowed('vulnerabilities:update')">
+                            <q-checkbox v-model="props.selected" />
+                        </q-td>
                         <q-td key="title" :props="props">
                             {{getDtTitle(props.row)}}
                         </q-td>
@@ -805,84 +843,85 @@
         </q-layout>
     </q-dialog>
 
-    <q-dialog persistent ref="mergeModal">
-        <q-card style="width: 1000px; max-width: 1000px; height: 60vh">
+    <q-dialog persistent ref="mergeModal" @hide="resetMergeModal">
+        <q-card style="width: 800px; max-width: 800px; height: 70vh">
             <q-bar class="bg-fixed-primary text-white">
                 <span>{{$t('mergeVulnerabilities')}}</span>
                 <q-space />
                 <q-btn dense flat icon="close" @click="$refs.mergeModal.hide()" />
             </q-bar>
 
-            <div v-if="languages.length < 2">
-                <q-card-section v-html="$t('mergeVulnerabilitiesInfo')"></q-card-section>
-            </div>
-            <div v-else class="row">
-                <div class="col-md-6 col-6">
-                    <q-card-section class="col-md-6">
-                        <q-select
-                        :label="$t('languageAddFromRight')"
-                        v-model="mergeLanguageLeft"
-                        :options="languages"
-                        option-value="locale"
-                        option-label="language"
-                        map-options
-                        emit-value
-                        @update:model-value="mergeVulnLeft = ''"
-                        options-sanitize
-                        outlined
-                        />
-                    </q-card-section>
-                    <q-card-section class="card-section-merge">
-                        <q-scroll-area class="full-height">
-                            <q-list>
-                                <q-item tag="label" v-for="vuln of filteredVulnerabilitiesMergeLeft" :key="vuln._id" dense class="q-pl-none">
-                                        <q-item-section side top>
-                                            <q-radio v-model="mergeVulnLeft" :val="vuln._id" />
-                                        </q-item-section>
-                                        <q-item-section>
-                                                <q-item-label>{{getVulnTitleLocale(vuln, mergeLanguageLeft)}}</q-item-label>
-                                        </q-item-section>
-                                </q-item>
-                            </q-list>
-                        </q-scroll-area>
-                    </q-card-section>
+            <q-card-section>
+                <div class="text-grey-8 q-mb-md" v-html="$t('mergeVulnerabilitiesInfoNew')"></div>
+                <div class="row q-col-gutter-md">
+                    <q-input
+                    class="col-md-8"
+                    v-model="mergeTitle"
+                    :label="$t('mergedVulnerabilityTitle')"
+                    outlined
+                    dense
+                    />
+                    <q-select
+                    class="col-md-4"
+                    v-model="mergeLocale"
+                    :options="languages"
+                    option-value="locale"
+                    option-label="language"
+                    map-options
+                    emit-value
+                    :label="$t('language')"
+                    outlined
+                    dense
+                    options-sanitize
+                    />
                 </div>
-                <q-separator vertical />
-                <div class="col">
-                    <q-card-section>
-                        <q-select
-                        :label="$t('languageMoveToLeft')"
-                        v-model="mergeLanguageRight"
-                        :options="languages"
-                        option-value="locale"
-                        option-label="language"
-                        map-options
-                        emit-value
-                        @update:model-value="mergeVulnRight = ''"
-                        options-sanitize
-                        outlined
-                        />
-                    </q-card-section>
-                    <q-card-section class="card-section-merge">
-                        <q-scroll-area class="full-height">
-                            <q-list>
-                                <q-item tag="label" v-for="vuln of filteredVulnerabilitiesMergeRight" :key="vuln._id" dense class="q-pl-none">
-                                        <q-item-section side top>
-                                            <q-radio v-model="mergeVulnRight" :val="vuln._id" />
-                                        </q-item-section>
-                                        <q-item-section>
-                                                <q-item-label>{{getVulnTitleLocale(vuln, mergeLanguageRight)}}</q-item-label>
-                                        </q-item-section>
-                                </q-item>
-                            </q-list>
-                        </q-scroll-area>
-                    </q-card-section>
-                </div>
-            </div>
+            </q-card-section>
+
             <q-separator />
-            <q-card-actions align="center">
-                    <q-btn color="secondary" unelevated @click="mergeVulnerabilities" :disable="mergeVulnLeft === '' || mergeVulnRight === ''">{{$t('merge')}}</q-btn>
-                </q-card-actions>
+
+            <q-card-section class="q-py-sm bg-blue-grey-1">
+                <div class="row items-center">
+                    <span class="text-bold">{{$t('selectVulnerabilitiesToMerge')}}</span>
+                    <q-space />
+                    <q-badge color="primary">{{mergeSelectedVulns.length}} {{$t('selected')}}</q-badge>
+                </div>
+            </q-card-section>
+
+            <q-card-section class="card-section-merge-list q-pa-none">
+                <q-scroll-area class="full-height">
+                    <q-list separator>
+                        <q-item tag="label" v-for="vuln of computedVulnerabilities" :key="vuln._id" dense clickable>
+                            <q-item-section side top>
+                                <q-checkbox v-model="mergeSelectedVulns" :val="vuln._id" />
+                            </q-item-section>
+                            <q-item-section>
+                                <q-item-label>{{getDtTitle(vuln)}}</q-item-label>
+                                <q-item-label caption>{{vuln.category || $t('noCategory')}}</q-item-label>
+                            </q-item-section>
+                            <q-item-section side v-if="vuln.priority">
+                                <q-badge :color="getPriorityColor(vuln.priority)">
+                                    {{getPriorityLabel(vuln.priority)}}
+                                </q-badge>
+                            </q-item-section>
+                        </q-item>
+                    </q-list>
+                </q-scroll-area>
+            </q-card-section>
+
+            <q-separator />
+
+            <q-card-actions align="right">
+                <q-btn color="primary" outline @click="$refs.mergeModal.hide()">{{$t('btn.cancel')}}</q-btn>
+                <q-btn 
+                color="secondary" 
+                unelevated 
+                @click="mergeVulnerabilities" 
+                :disable="mergeSelectedVulns.length < 2"
+                :loading="merging"
+                >
+                    {{$t('merge')}} ({{mergeSelectedVulns.length}})
+                </q-btn>
+            </q-card-actions>
         </q-card>
     </q-dialog>
 </template>
@@ -890,7 +929,8 @@
 <script src='./vulnerabilities.js'></script>
 
 <style scoped>
-.card-section-merge { 
-    height: calc(60vh - 173px);
+.card-section-merge-list { 
+    height: calc(70vh - 280px);
+    overflow: hidden;
 }
 </style>

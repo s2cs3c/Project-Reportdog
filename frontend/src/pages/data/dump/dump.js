@@ -2,6 +2,7 @@ import { Dialog, Notify } from 'quasar'
 import YAML from 'js-yaml'
 
 import VulnerabilityService from '@/services/vulnerability'
+import DataService from '@/services/data'
 import { useUserStore } from 'src/stores/user'
 
 import { $t } from '@/boot/i18n'
@@ -13,11 +14,15 @@ export default {
         return {
             userStore: userStore,
             vulnerabilities: [],
+            // Nessus import
+            languages: [],
+            nessusLocale: 'en',
+            nessusImporting: false
         }
     },
 
     mounted: function() {
-        
+        this.getLanguages()
     },
 
     methods: {
@@ -257,6 +262,91 @@ export default {
                         textColor: 'white',
                         position: 'top-right'
                     })
+                })
+            })
+        },
+
+        // Get available languages for Nessus import
+        getLanguages: function() {
+            DataService.getLanguages()
+            .then((data) => {
+                this.languages = data.data.datas
+                if (this.languages.length > 0) {
+                    this.nessusLocale = this.languages[0].locale
+                }
+            })
+            .catch((err) => {
+                console.log(err)
+            })
+        },
+
+        // Import vulnerabilities from Nessus XML file
+        importNessus: function(files) {
+            if (!files || files.length === 0) return
+            
+            const file = files[0]
+            const ext = file.name.split('.').pop().toLowerCase()
+            
+            if (ext !== 'nessus' && ext !== 'xml') {
+                Notify.create({
+                    message: $t('msg.invalidNessusFile'),
+                    color: 'negative',
+                    textColor: 'white',
+                    position: 'top-right'
+                })
+                return
+            }
+
+            this.nessusImporting = true
+            
+            VulnerabilityService.importNessusData(file, this.nessusLocale)
+            .then((data) => {
+                this.nessusImporting = false
+                const result = data.data.datas
+                var message = ""
+                var color = "positive"
+                
+                if (result.created === 0 && result.duplicates === 0) {
+                    message = $t('msg.nessusImportEmpty')
+                    color = "warning"
+                } else if (result.duplicates === 0) {
+                    message = $t('msg.nessusImportOk', [result.created])
+                } else if (result.created === 0) {
+                    message = $t('msg.nessusImportAllExists', [result.duplicates.length || result.duplicates])
+                    color = "warning"
+                } else {
+                    message = $t('msg.nessusImportPartial', [result.created, result.duplicates.length || result.duplicates])
+                    color = "orange"
+                }
+                
+                if (result.summary) {
+                    message += `<br><br><strong>Summary:</strong><br>`
+                    message += `Critical: ${result.summary.byPriority.urgent}, High: ${result.summary.byPriority.high}, `
+                    message += `Medium: ${result.summary.byPriority.medium}, Low: ${result.summary.byPriority.low}`
+                }
+                
+                Notify.create({
+                    message: message,
+                    html: true,
+                    closeBtn: 'x',
+                    color: color,
+                    textColor: 'white',
+                    position: 'top-right',
+                    timeout: 10000
+                })
+                
+                // Reset file input
+                if (this.$refs.importNessus) {
+                    this.$refs.importNessus.value = ''
+                }
+            })
+            .catch((err) => {
+                this.nessusImporting = false
+                Notify.create({
+                    message: err.response?.data?.datas || $t('msg.nessusImportError'),
+                    color: 'negative',
+                    textColor: 'white',
+                    position: 'top-right'
                 })
             })
         }
