@@ -114,34 +114,38 @@
 							</q-item-section>
 							<q-item-section v-if="audit.type === 'multi'">{{$t('audits')}} ({{audit.findings.length || 0}})</q-item-section>
 							<q-item-section v-else>{{$t('findings')}} ({{audit.findings.length || 0}})</q-item-section>
-							<q-item-section avatar>
-								<q-btn
-								@click="$refs.mergeModal.show()"
-								icon="merge_type"
-								round
-								dense
-								color="secondary"
-								v-if="frontEndAuditState === AUDIT_VIEW_STATE.EDIT && audit.type === 'default' && audit.findings && audit.findings.length >= 2"
-								class="q-mr-xs"
-								>
-									<q-tooltip>{{$t('merge')}}</q-tooltip>
-								</q-btn>
-								<q-btn
-								@click="$router.push('/audits/'+auditId+'/findings/add').catch(err=>{})"
-								icon="add"
-								round
-								dense
-								color="secondary"
-								v-if="frontEndAuditState === AUDIT_VIEW_STATE.EDIT && audit.type === 'default'"
-								/>
-								<q-btn
-								@click="$router.push('/audits/'+auditId+'/audits/add').catch(err=>{})"
-								icon="add"
-								round
-								dense
-								color="secondary"
-								v-if="frontEndAuditState === AUDIT_VIEW_STATE.EDIT && audit.type === 'multi'"
-								/>
+							<q-item-section side>
+								<div class="row items-center no-wrap q-gutter-xs">
+									<q-btn
+									@click="$refs.mergeModal.show()"
+									icon="merge_type"
+									round
+									dense
+									size="sm"
+									color="secondary"
+									v-if="frontEndAuditState === AUDIT_VIEW_STATE.EDIT && audit.type === 'default' && audit.findings && audit.findings.length >= 2"
+									>
+										<q-tooltip>{{$t('merge')}}</q-tooltip>
+									</q-btn>
+									<q-btn
+									@click="$router.push('/audits/'+auditId+'/findings/add').catch(err=>{})"
+									icon="add"
+									round
+									dense
+									size="sm"
+									color="secondary"
+									v-if="frontEndAuditState === AUDIT_VIEW_STATE.EDIT && audit.type === 'default'"
+									/>
+									<q-btn
+									@click="$router.push('/audits/'+auditId+'/audits/add').catch(err=>{})"
+									icon="add"
+									round
+									dense
+									size="sm"
+									color="secondary"
+									v-if="frontEndAuditState === AUDIT_VIEW_STATE.EDIT && audit.type === 'multi'"
+									/>
+								</div>
 							</q-item-section>
 						</q-item>
 						
